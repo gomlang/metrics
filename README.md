@@ -131,17 +131,17 @@ cumulative; the `+Inf` bucket equals `_count`. Nonempty output ends in a newline
 response. An empty registry produces an empty body. Metadata-only families emit
 HELP/TYPE without samples. Negative zero exports as `0`.
 
-The independent versioned consumer in `../consumers/metrics` records request
+The independent versioned consumer in `../../goml-dev/ecosystem/consumers/metrics` records request
 counts, active requests, pool state and elapsed time, serves `/metrics` over a
 real local TCP HTTP exchange, and checks the scraped output. Applications using
 `ecosystem::web` can place `render_with` in their route handler and set the
 returned content type; the metrics library itself has no HTTP dependency.
 
 ```sh
-cd ecosystem/metrics
-../../stage2/bin/goml fmt --check
-../../stage2/bin/goml test
-GOFLAGS=-race ../../stage2/bin/goml test --target-dir _artifact/race --timeout 300s
+cd ~/git/gomlang/metrics
+../../goml-dev/stage2/bin/goml fmt --check
+../../goml-dev/stage2/bin/goml test
+GOFLAGS=-race ../../goml-dev/stage2/bin/goml test --target-dir _artifact/race --timeout 300s
 ```
 
 Native tests cover exact exposition vectors, Unicode and escaping, normalized
