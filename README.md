@@ -131,7 +131,7 @@ cumulative; the `+Inf` bucket equals `_count`. Nonempty output ends in a newline
 response. An empty registry produces an empty body. Metadata-only families emit
 HELP/TYPE without samples. Negative zero exports as `0`.
 
-The independent versioned consumer in `../../goml-dev/ecosystem/consumers/metrics` records request
+The independent versioned consumer in `consumer` records request
 counts, active requests, pool state and elapsed time, serves `/metrics` over a
 real local TCP HTTP exchange, and checks the scraped output. Applications using
 `ecosystem::web` can place `render_with` in their route handler and set the
