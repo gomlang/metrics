@@ -262,26 +262,20 @@ impl Registry {
             for cell in family.series.get() {
                 samples.push(Sample { labels: cell.labels.copy(), value: cell.value.get().copy() });
             }
-            for index in 1..samples.len() {
-                let mut at = index;
-                while at > 0 && labels_before(samples[at].labels, samples[at - 1].labels) {
-                    let sample = samples[at];
-                    samples[at] = samples[at - 1];
-                    samples[at - 1] = sample;
-                    at -= 1;
-                }
-            }
+            samples.sort_by(|left, right| compare_labels(left.labels, right.labels));
             families.push(FamilySnapshot { descriptor: family.descriptor.copy(), samples });
         }
-        for index in 1..families.len() {
-            let mut at = index;
-            while at > 0 && families[at].descriptor.name < families[at - 1].descriptor.name {
-                let family = families[at];
-                families[at] = families[at - 1];
-                families[at - 1] = family;
-                at -= 1;
-            }
-        }
+        families.sort_by(
+            |left, right| {
+                if left.descriptor.name < right.descriptor.name {
+                    -1
+                } else if left.descriptor.name > right.descriptor.name {
+                    1
+                } else {
+                    0
+                }
+            },
+        );
         Snapshot { families_value: families }
     }
 
@@ -297,13 +291,16 @@ impl Registry {
     }
 }
 
-fn labels_before(left: Vec[Label], right: Vec[Label]) -> bool {
+fn compare_labels(left: Vec[Label], right: Vec[Label]) -> isize {
     for index in 0..left.len() {
-        if left[index].value != right[index].value {
-            return left[index].value < right[index].value
+        if left[index].value < right[index].value {
+            return -1
+        }
+        if left[index].value > right[index].value {
+            return 1
         }
     }
-    false
+    0
 }
 
 fn initial_value(descriptor: Descriptor) -> Value {

@@ -169,3 +169,9 @@ goml verify --timeout 300s
 ```
 
 `goml test` builds the example and runs its tests. `goml verify` repeats the example checks as an independent module against an isolated registry snapshot. `(cd ../verification && just ecosystem-test metrics)` also retains the library-specific smoke and compatibility checks.
+
+Snapshot ordering uses O(n log n) comparisons for families and each family’s
+series, including reverse registration order, with O(n) temporary sort storage. Label values are compared
+lexicographically in descriptor order. Snapshot copying and ordering remain
+under the registry lock to preserve one consistent view; large registries can
+still delay updates, and configured cardinality limits remain important.
