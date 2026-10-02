@@ -2,6 +2,7 @@ package tests;
 
 use ecosystem::metrics;
 use std::testing;
+use std::context;
 use ecosystem::metrics::examples::basic as application;
 
 #[test]
@@ -21,4 +22,26 @@ fn public_snapshot_sorts_reversed_families() -> () {
     let families = registry.snapshot().families();
     testing::assert_eq(families[0].descriptor.name, "a");
     testing::assert_eq(families[2].descriptor.name, "z");
+}
+
+#[test]
+fn public_collector_commits_indexed_label_targets() -> () {
+    let registry = testing::expect_ok(
+        metrics::Registry::new(metrics::Options::standard()),
+        "registry",
+    );
+    let labels = metrics::Labels::empty();
+    let gauge = testing::expect_ok(
+        registry.gauge(metrics::Descriptor::gauge("batch", ""), labels),
+        "gauge",
+    );
+    testing::assert_ok(
+        registry.collect_gauges(
+            context::Context::background(),
+            |_| Result::Ok(
+                Vec::from_array([metrics::GaugeReading { name: "batch", labels, value: 42.0 }]),
+            ),
+        ),
+    );
+    testing::assert_eq(testing::expect_ok(gauge.get(), "value"), 42.0);
 }

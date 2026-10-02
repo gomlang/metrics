@@ -1,0 +1,100 @@
+package tests;
+
+use ecosystem::metrics;
+use std::context;
+use std::testing;
+use std::num::{ToFloat};
+
+#[test]
+fn collector_indexes_batch_targets_without_stale_removed_cells() -> () {
+    let registry = testing::expect_ok(
+        metrics::Registry::new(
+            metrics::Options { max_series_per_family: 2048, ..metrics::Options::standard() },
+        ),
+        "registry",
+    );
+    let descriptor = metrics::Descriptor::gauge("batch", "").with_labels(Vec::from_array(["key"]));
+    let handles = Vec::new();
+    let readings = Vec::new();
+    for index in 0..1024 {
+        let labels = labels("key", index.to_string());
+        handles.push(testing::expect_ok(registry.gauge(descriptor, labels), "gauge"));
+        readings.push(metrics::GaugeReading { name: "batch", labels, value: index.to_f64() });
+    }
+    readings.reverse();
+    testing::assert_ok(
+        registry.collect_gauges(context::Context::background(), |_| Result::Ok(readings)),
+    );
+    for index in 0..handles.len() {
+        testing::assert_eq(testing::expect_ok(handles[index].get(), "value"), index.to_f64());
+    }
+    testing::expect_ok(registry.remove_series("batch", labels("key", "0")), "remove");
+    let replacement = testing::expect_ok(
+        registry.gauge(descriptor, labels("key", "0")),
+        "replacement",
+    );
+    testing::assert_ok(
+        registry.collect_gauges(context::Context::background(), |_| Result::Ok(readings)),
+    );
+    testing::assert_eq(testing::expect_ok(replacement.get(), "new cell"), 0.0);
+    testing::assert(handles[0].get().is_err());
+    testing::assert(registry.unregister("batch"));
+    testing::assert(
+        registry.collect_gauges(context::Context::background(), |_| Result::Ok(readings)).is_err(),
+    );
+}
+
+#[test]
+fn collector_keys_distinguish_delimiters_and_validate_before_atomic_commit() -> () {
+    let registry = testing::expect_ok(
+        metrics::Registry::new(
+            metrics::Options { max_label_value_bytes: 8, ..metrics::Options::standard() },
+        ),
+        "registry",
+    );
+    let descriptor = metrics::Descriptor::gauge("keys", "").with_labels(Vec::from_array(["a", "b"]));
+    let first = testing::expect_ok(
+        metrics::Labels::new(Vec::from_array([("a", "x:1"), ("b", "")])),
+        "first",
+    );
+    let second = testing::expect_ok(
+        metrics::Labels::new(Vec::from_array([("a", "x"), ("b", ":1")])),
+        "second",
+    );
+    let a = testing::expect_ok(registry.gauge(descriptor, first), "a");
+    let b = testing::expect_ok(registry.gauge(descriptor, second), "b");
+    let readings = Vec::from_array(
+        [
+            metrics::GaugeReading { name: "keys", labels: first, value: 3.0 },
+            metrics::GaugeReading { name: "keys", labels: second, value: 7.0 },
+        ],
+    );
+    testing::assert_ok(
+        registry.collect_gauges(context::Context::background(), |_| Result::Ok(readings)),
+    );
+    testing::assert_eq(testing::expect_ok(a.get(), "a"), 3.0);
+    testing::assert_eq(testing::expect_ok(b.get(), "b"), 7.0);
+    let too_long = testing::expect_ok(
+        metrics::Labels::new(Vec::from_array([("a", "123456789"), ("b", "")])),
+        "long",
+    );
+    readings[0] = metrics::GaugeReading { value: 99.0, ..readings[0] };
+    readings[1] = metrics::GaugeReading { labels: too_long, ..readings[1] };
+    testing::assert_eq(
+        testing::expect_err(
+            registry.collect_gauges(context::Context::background(), |_| Result::Ok(readings)),
+            "limit",
+        ).kind,
+        metrics::ErrorKind::Limit,
+    );
+    testing::assert_eq(testing::expect_ok(a.get(), "unchanged"), 3.0);
+    readings[1] = readings[0];
+    testing::assert_eq(
+        testing::expect_err(
+            registry.collect_gauges(context::Context::background(), |_| Result::Ok(readings)),
+            "duplicate",
+        ).kind,
+        metrics::ErrorKind::Conflict,
+    );
+    testing::assert_eq(testing::expect_ok(a.get(), "unchanged duplicate"), 3.0);
+}
