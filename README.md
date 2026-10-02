@@ -131,7 +131,7 @@ cumulative; the `+Inf` bucket equals `_count`. Nonempty output ends in a newline
 response. An empty registry produces an empty body. Metadata-only families emit
 HELP/TYPE without samples. Negative zero exports as `0`.
 
-The independent versioned consumer in `consumer` records request
+The `examples/basic` example records request
 counts, active requests, pool state and elapsed time, serves `/metrics` over a
 real local TCP HTTP exchange, and checks the scraped output. Applications using
 `ecosystem::web` can place `render_with` in their route handler and set the
@@ -157,3 +157,15 @@ throughput; a large scrape temporarily serializes updates. Floating sums use
 ordinary IEEE-754 arithmetic and can accumulate rounding error. The registry
 retains exact integer counts, but Prometheus ingestion represents sample values
 as floating point, so very large counts may lose precision downstream.
+
+## Development and examples
+
+Requires GoML 0.1.55 or newer. The `examples/basic/` example shares the root manifest and its dependencies. From the library root, run:
+
+```sh
+goml run --example basic
+goml test
+goml verify --timeout 300s
+```
+
+`goml test` builds the example and runs its tests. `goml verify` repeats the example checks as an independent module against an isolated registry snapshot. `(cd ../verification && just ecosystem-test metrics)` also retains the library-specific smoke and compatibility checks.

@@ -1,6 +1,6 @@
 package tests;
 
-use consumer::metrics as application;
+use ecosystem::metrics::examples::basic as application;
 
 #[test]
 fn versioned_consumer_serves_native_metrics_http_endpoint() -> () {
