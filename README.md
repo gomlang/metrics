@@ -175,3 +175,14 @@ series, including reverse registration order, with O(n) temporary sort storage. 
 lexicographically in descriptor order. Snapshot copying and ordering remain
 under the registry lock to preserve one consistent view; large registries can
 still delay updates, and configured cardinality limits remain important.
+
+Gauge collection builds a family-name index once per batch and lazily indexes
+series only in families the batch references. Lookup work is O(families +
+referenced-family series + readings), excluding bounded key text, rather than
+rescanning all families and target series per reading. Indexes exist only for
+the locked batch, so removal/re-registration cannot leave stale cells. Label
+schema and byte limits are validated before duplicate-key construction. Keys
+use length prefixes, including empty values and delimiter characters. As before,
+a failed/cancelled/duplicate batch commits no updates, and callbacks run outside
+the registry gate. Temporary indexes use memory proportional to those families
+and series; registry cardinality and label byte limits bound it.
