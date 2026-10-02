@@ -1,0 +1,52 @@
+package tests;
+
+use ecosystem::metrics;
+use std::testing;
+
+#[test]
+fn reverse_registered_families_and_series_have_lexical_snapshot_order() -> () {
+    let registry = testing::expect_ok(
+        metrics::Registry::new(
+            metrics::Options { max_series_per_family: 2048, ..metrics::Options::standard() },
+        ),
+        "registry",
+    );
+    let descriptor = metrics::Descriptor::gauge("series", "ordered").with_labels(
+        Vec::from_array(["first", "second"]),
+    );
+    let keys = Vec::new();
+    for index in 0..1024 {
+        keys.push((10000 + index).to_string());
+    }
+    for index in 0..keys.len() {
+        let key = keys[keys.len() - index - 1];
+        let labels = testing::expect_ok(
+            metrics::Labels::new(Vec::from_array([("first", key), ("second", "z")])),
+            "labels",
+        );
+        testing::expect_ok(registry.gauge(descriptor, labels), "series");
+    }
+    for index in 0..64 {
+        let name = "family_" + keys[63 - index];
+        testing::assert_ok(registry.register(metrics::Descriptor::counter(name, "")));
+    }
+    let families = registry.snapshot().families();
+    testing::assert_eq(families.len(), 65);
+    for index in 0..64 {
+        testing::assert_eq(families[index].descriptor.name, "family_" + keys[index]);
+    }
+    let series = families[64].samples;
+    testing::assert_eq(series.len(), 1024);
+    for index in 0..series.len() {
+        testing::assert_eq(series[index].labels[0].value, keys[index]);
+    }
+    let labels = testing::expect_ok(
+        metrics::Labels::new(Vec::from_array([("first", keys[0]), ("second", "a")])),
+        "labels",
+    );
+    testing::expect_ok(registry.gauge(descriptor, labels), "secondary label");
+    let changed = registry.snapshot().families()[64].samples;
+    testing::assert_eq(changed[0].labels[1].value, "a");
+    testing::assert_eq(changed[1].labels[1].value, "z");
+    testing::assert_eq(series.len(), 1024);
+}

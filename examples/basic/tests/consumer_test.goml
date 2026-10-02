@@ -1,8 +1,24 @@
 package tests;
 
+use ecosystem::metrics;
+use std::testing;
 use ecosystem::metrics::examples::basic as application;
 
 #[test]
 fn versioned_consumer_serves_native_metrics_http_endpoint() -> () {
     application::exercise()
+}
+
+#[test]
+fn public_snapshot_sorts_reversed_families() -> () {
+    let registry = testing::expect_ok(
+        metrics::Registry::new(metrics::Options::standard()),
+        "registry",
+    );
+    for name in["z", "m", "a"] {
+        testing::assert_ok(registry.register(metrics::Descriptor::gauge(name, "")));
+    }
+    let families = registry.snapshot().families();
+    testing::assert_eq(families[0].descriptor.name, "a");
+    testing::assert_eq(families[2].descriptor.name, "z");
 }
