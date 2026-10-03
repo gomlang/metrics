@@ -1,6 +1,8 @@
 package metrics;
 
 use std::text;
+use std::io;
+use io::Write;
 
 pub fn content_type() -> string {
     "text/plain; version=0.0.4; charset=utf-8"
@@ -51,15 +53,81 @@ fn number(value: f64) -> string {
     }
 }
 
+#[derive(Debug)]
+pub enum ExportError {
+    Limit,
+    Io(io::Error),
+}
+
+impl ToString for ExportError {
+    fn to_string(self: ExportError) -> string {
+        match self {
+            Limit => "Prometheus output exceeds byte limit",
+            Io(problem) => problem.to_string(),
+        }
+    }
+}
+
 impl Snapshot {
     pub fn prometheus(self: Snapshot) -> string {
         let output = text::StringBuilder::new();
+        let _ = self.emit_prometheus(
+            |part| {
+                output.write_string(part);
+                Result::Ok(())
+            },
+        );
+        output.finish()
+    }
+
+    pub fn prometheus_with_limit(self: Snapshot, max_bytes: isize) -> Result[string, ExportError] {
+        if max_bytes < 0 {
+            return Result::Err(ExportError::Limit)
+        }
+        let output = text::StringBuilder::new();
+        let used = Ref::new(0);
+        self.emit_prometheus(
+            |part| {
+                if part.byte_len() > max_bytes - used.get() {
+                    return Result::Err(ExportError::Limit)
+                }
+                output.write_string(part);
+                used.set(used.get() + part.byte_len());
+                Result::Ok(())
+            },
+        )?;
+        Result::Ok(output.finish())
+    }
+
+    pub fn write_prometheus[W: Write](self: Snapshot, sink: W, max_bytes: isize) -> Result[
+        isize,
+        ExportError,
+    ] {
+        if max_bytes < 0 {
+            return Result::Err(ExportError::Limit)
+        }
+        let used = Ref::new(0);
+        self.emit_prometheus(
+            |part| {
+                if part.byte_len() > max_bytes - used.get() {
+                    return Result::Err(ExportError::Limit)
+                }
+                sink.write_all(part.to_bytes().as_slice()).map_err(ExportError::Io)?;
+                used.set(used.get() + part.byte_len());
+                Result::Ok(())
+            },
+        )?;
+        Result::Ok(used.get())
+    }
+
+    fn emit_prometheus(self: Snapshot, emit: (string) -> Result[(), ExportError]) -> Result[
+        (),
+        ExportError,
+    ] {
         for family in self.families_value {
             let descriptor = family.descriptor;
-            output.write_string(
-                "# HELP " + descriptor.name + " " + escaped(descriptor.help, false) + "\n",
-            );
-            output.write_string(
+            emit("# HELP " + descriptor.name + " " + escaped(descriptor.help, false) + "\n")?;
+            emit(
                 "# TYPE " + descriptor.name + " "
                     + match descriptor.kind {
                         Counter => "counter",
@@ -67,19 +135,17 @@ impl Snapshot {
                         Histogram => "histogram",
                     }
                     + "\n",
-            );
+            )?;
             for sample in family.samples {
                 let labels = sample_labels(sample.labels, Option::None);
                 match sample.value {
-                    Counter(value) => output.write_string(
+                    Counter(value) => emit(
                         descriptor.name + labels + " " + value.to_string() + "\n",
-                    ),
-                    Gauge(value) => output.write_string(
-                        descriptor.name + labels + " " + number(value) + "\n",
-                    ),
+                    )?,
+                    Gauge(value) => emit(descriptor.name + labels + " " + number(value) + "\n")?,
                     Histogram(value) => {
                         for index in 0..value.boundaries.len() {
-                            output.write_string(
+                            emit(
                                 descriptor.name + "_bucket"
                                     + sample_labels(
                                         sample.labels,
@@ -88,26 +154,24 @@ impl Snapshot {
                                     + " "
                                     + value.cumulative[index].to_string()
                                     + "\n",
-                            );
+                            )?;
                         }
-                        output.write_string(
+                        emit(
                             descriptor.name + "_bucket"
                                 + sample_labels(sample.labels, Option::Some("+Inf"))
                                 + " "
                                 + value.count.to_string()
                                 + "\n",
-                        );
-                        output.write_string(
-                            descriptor.name + "_sum" + labels + " " + number(value.sum) + "\n",
-                        );
-                        output.write_string(
+                        )?;
+                        emit(descriptor.name + "_sum" + labels + " " + number(value.sum) + "\n")?;
+                        emit(
                             descriptor.name + "_count" + labels + " " + value.count.to_string()
                                 + "\n",
-                        );
+                        )?;
                     },
                 }
             }
         }
-        output.finish()
+        Result::Ok(())
     }
 }

@@ -1,0 +1,36 @@
+package tests;
+
+use ecosystem::metrics;
+use std::bytes;
+use std::io;
+use std::testing;
+use std::utf8::{BytesUtf8};
+
+#[test]
+fn consumer_exports_a_snapshot_to_a_bounded_stream() -> () {
+    let registry = testing::expect_ok(
+        metrics::Registry::new(metrics::Options::standard()),
+        "registry",
+    );
+    let counter = testing::expect_ok(
+        registry.counter(
+            metrics::Descriptor::counter("jobs_total", "Completed"),
+            metrics::Labels::empty(),
+        ),
+        "counter",
+    );
+    testing::assert_ok(counter.add(3));
+    let expected = "# HELP jobs_total Completed\n# TYPE jobs_total counter\njobs_total 3\n";
+    let snapshot = registry.snapshot();
+    let sink = io::Cursor::new(bytes::Bytes::new());
+    testing::assert_eq(
+        testing::expect_ok(snapshot.write_prometheus(sink, expected.byte_len()), "stream"),
+        expected.byte_len(),
+    );
+    testing::assert_eq(testing::expect_ok(sink.bytes().to_string_utf8(), "wire"), expected);
+    testing::assert_eq(
+        testing::expect_ok(snapshot.prometheus_with_limit(expected.byte_len()), "bounded text"),
+        expected,
+    );
+    testing::assert(snapshot.prometheus_with_limit(expected.byte_len() - 1).is_err());
+}

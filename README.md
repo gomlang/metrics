@@ -186,3 +186,29 @@ use length prefixes, including empty values and delimiter characters. As before,
 a failed/cancelled/duplicate batch commits no updates, and callbacks run outside
 the registry gate. Temporary indexes use memory proportional to those families
 and series; registry cardinality and label byte limits bound it.
+
+### Bounded and streaming exposition
+
+`Snapshot.prometheus_with_limit(max_bytes)` returns a complete Prometheus 0.0.4
+string only when its UTF-8 output fits the budget. A negative budget is invalid;
+zero accepts an empty snapshot. `Snapshot.write_prometheus(sink, max_bytes)` writes
+the same deterministic output to a `std::io::Write` implementation and returns
+the byte count on success. Both use `ExportError::{Limit, Io(io::Error)}`; the
+string method only returns `Limit`. Existing `prometheus`, `render` and content
+type APIs retain their output and behavior.
+
+Streaming checks the remaining budget before each complete metadata or sample
+line and uses `write_all` to handle short writes. Zero progress, negative counts
+and counts larger than the offered buffer become I/O errors. An error stops
+immediately; the sink can contain a prefix (including a partial final line on
+I/O failure), so callers must discard incomplete responses. No returned partial
+byte count is promised on failure. Provider errors retain their details, are not
+retried, and provider panics propagate. The exporter never flushes or closes a
+caller-owned sink.
+
+Take a registry snapshot first, then export it. Registry changes during a sink
+callback do not affect that detached snapshot, and no registry lock is held while
+writing. Streaming does not build an aggregate response string: temporary text is
+bounded by the largest rendered line, determined by registered name/help/label
+limits. The output budget bounds emitted bytes, not existing snapshot storage or
+that temporary line. String rendering stores the output up to its byte budget.

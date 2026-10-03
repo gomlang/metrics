@@ -1,0 +1,185 @@
+package tests;
+
+use ecosystem::metrics;
+use std::bytes;
+use std::io;
+use io::Write;
+use std::panic;
+use std::testing;
+use std::utf8::{BytesUtf8};
+
+struct ExportSink {
+    data: bytes::Bytes,
+    calls: Ref[isize],
+    mode: isize,
+    fail_after: isize,
+    on_first: () -> (),
+}
+
+impl Write for ExportSink {
+    fn write(self: ExportSink, input: Slice[byte]) -> Result[isize, io::Error] {
+        self.calls.set(self.calls.get() + 1);
+        if self.calls.get() == 1 {
+            (self.on_first)();
+        }
+        if self.mode == 1 {
+            return Result::Ok(0)
+        }
+        if self.mode == 2 {
+            return Result::Ok(input.len() + 1)
+        }
+        if self.mode == 3 {
+            return Result::Ok(-1)
+        }
+        if self.mode == 4 {
+            panic::raise("sink panic");
+        }
+        if self.data.len() >= self.fail_after {
+            return Result::Err(
+                io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "test export",
+                    Option::Some("sink"),
+                    Option::Some(7),
+                    "failure",
+                ),
+            )
+        }
+        let mut count = if input.len() < 3 {
+            input.len()
+        } else {
+            3
+        };
+        if count > self.fail_after - self.data.len() {
+            count = self.fail_after - self.data.len();
+        }
+        self.data.extend_from_slice(input.sub(0, count));
+        Result::Ok(count)
+    }
+
+    fn flush(self: ExportSink) -> Result[(), io::Error] {
+        panic::raise("export must not flush a caller-owned sink")
+    }
+}
+
+fn export_sink(mode: isize, fail_after: isize) -> ExportSink {
+    ExportSink { data: bytes::Bytes::new(), calls: Ref::new(0), mode, fail_after, on_first: || () }
+}
+
+#[test]
+fn streaming_and_bounded_prometheus_preserve_all_types_escaping_and_snapshot() -> () {
+    let registry = registry();
+    let value = testing::expect_ok(
+        registry.counter(
+            metrics::Descriptor::counter("calls_total", "Calls\\\n中").with_labels(
+                Vec::from_array(["route"]),
+            ),
+            labels("route", "a\"\\\n中"),
+        ),
+        "counter",
+    );
+    testing::assert_ok(value.add(9));
+    let gauge = testing::expect_ok(
+        registry.gauge(metrics::Descriptor::gauge("temperature", "Gauge"), empty()),
+        "gauge",
+    );
+    testing::assert_ok(gauge.set(-2.5));
+    let hist = histogram(registry, "latency");
+    testing::assert_ok(hist.observe(0.25));
+    testing::assert_ok(registry.register(metrics::Descriptor::counter("metadata", "Only metadata")));
+    let snapshot = registry.snapshot();
+    let expected = snapshot.prometheus();
+    let sink = ExportSink {
+        on_first: || {
+            testing::assert_ok(value.add(1));
+        },
+        ..export_sink(0, 100000),
+    };
+    testing::assert_eq(
+        testing::expect_ok(snapshot.write_prometheus(sink, expected.byte_len()), "stream"),
+        expected.byte_len(),
+    );
+    testing::assert_eq(testing::expect_ok(sink.data.to_string_utf8(), "utf8"), expected);
+    testing::assert_eq(
+        testing::expect_ok(snapshot.prometheus_with_limit(expected.byte_len()), "exact bound"),
+        expected,
+    );
+    testing::assert(registry.render() != expected);
+    testing::assert(snapshot.prometheus_with_limit(expected.byte_len() - 1).is_err());
+    testing::assert(snapshot.prometheus_with_limit(-1).is_err());
+    testing::assert(sink.calls.get() > 10);
+}
+
+#[test]
+fn export_budget_is_checked_before_every_write_and_empty_outputs_accept_zero() -> () {
+    let registry = registry();
+    let snapshot = registry.snapshot();
+    let sink = export_sink(0, 100000);
+    testing::assert_eq(testing::expect_ok(snapshot.write_prometheus(sink, 0), "empty"), 0);
+    testing::assert_eq(testing::expect_ok(snapshot.prometheus_with_limit(0), "empty text"), "");
+    testing::assert(snapshot.write_prometheus(sink, -1).is_err());
+    testing::assert_eq(sink.calls.get(), 0);
+    testing::assert_ok(registry.register(metrics::Descriptor::gauge("x", "中")));
+    let snapshot = registry.snapshot();
+    let expected = snapshot.prometheus();
+    for limit in 0..expected.byte_len() {
+        let sink = export_sink(0, 100000);
+        match testing::expect_err(snapshot.write_prometheus(sink, limit), "limited") {
+            metrics::ExportError::Limit => (),
+            _ => panic::raise("expected byte limit"),
+        }
+        testing::assert(sink.data.len() <= limit);
+        testing::assert(
+            expected.starts_with(
+                testing::expect_ok(sink.data.to_string_utf8(), "complete UTF-8 fragments"),
+            ),
+        );
+        testing::assert(snapshot.prometheus_with_limit(limit).is_err());
+        if limit < "# HELP x 中\n".byte_len() {
+            testing::assert_eq(sink.calls.get(), 0);
+        }
+    }
+}
+
+#[test]
+fn export_rejects_invalid_writer_counts_and_preserves_io_error_without_retry() -> () {
+    let registry = registry();
+    testing::assert_ok(registry.register(metrics::Descriptor::gauge("x", "value")));
+    let snapshot = registry.snapshot();
+    for mode in[1, 2, 3] {
+        let sink = export_sink(mode, 100000);
+        match testing::expect_err(snapshot.write_prometheus(sink, 100000), "invalid writer") {
+            metrics::ExportError::Io(problem) => testing::assert_eq(
+                problem.kind(),
+                if mode == 1 {
+                    io::ErrorKind::WriteZero
+                } else {
+                    io::ErrorKind::InvalidData
+                },
+            ),
+            _ => panic::raise("expected I/O error"),
+        }
+        testing::assert_eq(sink.calls.get(), 1);
+    }
+    let sink = export_sink(0, 7);
+    match testing::expect_err(snapshot.write_prometheus(sink, 100000), "failing writer") {
+        metrics::ExportError::Io(problem) => {
+            testing::assert_eq(problem.kind(), io::ErrorKind::Interrupted);
+            testing::assert_eq(problem.operation(), "test export");
+            testing::assert(problem.context() == Option::Some("sink"));
+            testing::assert(problem.raw_os_code() == Option::Some(7));
+            testing::assert_eq(problem.message(), "failure");
+        },
+        _ => panic::raise("expected I/O error"),
+    }
+    testing::assert_eq(sink.data.len(), 7);
+    testing::assert_eq(sink.calls.get(), 4);
+    let sink = export_sink(4, 100000);
+    let problem = testing::expect_err(
+        panic::catch(|| snapshot.write_prometheus(sink, 100000)),
+        "panic propagates",
+    );
+    testing::assert_eq(problem.message(), "sink panic");
+    testing::assert_eq(sink.calls.get(), 1);
+    testing::assert_eq(snapshot.prometheus(), registry.render());
+}
