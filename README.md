@@ -72,7 +72,9 @@ the descriptor's labels. Duplicate, malformed and reserved `__` names are
 rejected. Histograms reserve the `le` label. Metric identifiers may contain a
 colon; label and unit identifiers may not. Label values support Unicode and
 empty strings. Source vectors are copied so later caller edits cannot change
-registered schemas or series identities.
+registered schemas or series identities. Label sets and descriptor schemas use
+O(n log n) name comparisons for normalization, including reverse-ordered inputs,
+with O(n) temporary storage; names remain paired with their original values.
 
 The registry reserves histogram base, `_bucket`, `_sum` and `_count` names
 against every other metric family, in both registration orders. This prevents

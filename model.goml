@@ -96,20 +96,24 @@ fn name_valid(value: string, metric: bool) -> bool {
     true
 }
 
+fn compare_label_names(left: string, right: string) -> isize {
+    if left < right {
+        -1
+    } else if left > right {
+        1
+    } else {
+        0
+    }
+}
+
 fn sorted_names(names: Vec[string]) -> Result[Vec[string], Error] {
     let result = names.copy();
-    for index in 0..result.len() {
-        if !name_valid(result[index], false) {
+    for name in result {
+        if !name_valid(name, false) {
             return Result::Err(error(ErrorKind::InvalidLabels, "invalid or reserved label name"))
         }
-        let mut at = index;
-        while at > 0 && result[at] < result[at - 1] {
-            let value = result[at];
-            result[at] = result[at - 1];
-            result[at - 1] = value;
-            at -= 1;
-        }
     }
+    result.sort_by(compare_label_names);
     for index in 1..result.len() {
         if result[index] == result[index - 1] {
             return Result::Err(error(ErrorKind::InvalidLabels, "duplicate label name"))
@@ -134,17 +138,19 @@ impl Labels {
     }
 
     pub fn new(values: Vec[(string, string)]) -> Result[Labels, Error] {
-        let keys = Vec::new();
-        for (name, _) in values {
-            keys.push(name);
+        let result = Vec::with_capacity(values.len());
+        for (name, value) in values {
+            if !name_valid(name, false) {
+                return Result::Err(
+                    error(ErrorKind::InvalidLabels, "invalid or reserved label name"),
+                )
+            }
+            result.push(Label { name, value });
         }
-        let keys = sorted_names(keys)?;
-        let result = Vec::new();
-        for key in keys {
-            for (name, value) in values {
-                if key == name {
-                    result.push(Label { name, value });
-                }
+        result.sort_by(|left, right| compare_label_names(left.name, right.name));
+        for index in 1..result.len() {
+            if result[index].name == result[index - 1].name {
+                return Result::Err(error(ErrorKind::InvalidLabels, "duplicate label name"))
             }
         }
         Result::Ok(Labels { values: result })
