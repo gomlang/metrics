@@ -45,6 +45,9 @@ Handles can be copied and used concurrently across tasks.
   atomically. An implicit `+Inf` bucket is always exported with the total count.
   Empty explicit boundaries are allowed. Negative observations are allowed;
   therefore the sum is not necessarily monotonic.
+  Recording walks backward through the inclusive buckets affected by the value,
+  stopping at the first smaller boundary. Values above every explicit boundary
+  update only the total count and sum, without scanning the remaining boundaries.
 
 Use `linear_buckets` or `exponential_buckets` to construct checked boundaries.
 They reject overflow and boundaries that become equal through floating-point

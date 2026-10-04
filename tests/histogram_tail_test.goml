@@ -1,0 +1,71 @@
+package tests;
+
+use ecosystem::metrics;
+use std::testing;
+
+#[test]
+fn weighted_histograms_preserve_inclusive_tails_and_atomic_errors() -> () {
+    let smallest = float64_from_bits(1);
+    let registry = registry();
+    let histogram = testing::expect_ok(
+        registry.histogram(
+            metrics::Descriptor::histogram(
+                "weighted",
+                "",
+                Vec::from_array([-1.0, -smallest, -0.0, smallest, 1.0]),
+            ),
+            metrics::Labels::empty(),
+        ),
+        "weighted histogram",
+    );
+    for (value, weight, count, expected) in[
+        (1.0, 3, 3, [0, 0, 0, 0, 3]),
+        (0.0, 2, 5, [0, 0, 2, 2, 5]),
+        (-0.0, 1, 6, [0, 0, 3, 3, 6]),
+        (-smallest, 4, 10, [0, 4, 7, 7, 10]),
+        (smallest, 5, 15, [0, 4, 7, 12, 15]),
+        (2.0, 6, 21, [0, 4, 7, 12, 15]),
+        (-2.0, 7, 28, [7, 11, 14, 19, 22]),
+    ] {
+        testing::assert_ok(histogram.observe_many(value, weight));
+        let current = testing::expect_ok(histogram.get(), "weighted snapshot");
+        testing::assert_eq(current.count, count);
+        testing::assert(current.cumulative == Vec::from_array(expected));
+    }
+    let saved = testing::expect_ok(histogram.get(), "saved snapshot");
+    testing::assert_eq(saved.sum, 1.0);
+    testing::assert_ok(histogram.observe_many(1.7976931348623157e308, 0));
+    for (value, weight, kind) in[
+        (float64_from_bits(0x7ff8000000000001), 0, metrics::ErrorKind::InvalidValue),
+        (float64_from_bits(0x7ff0000000000000), 1, metrics::ErrorKind::InvalidValue),
+        (0.0, 18446744073709551615, metrics::ErrorKind::Overflow),
+        (1.7976931348623157e308, 2, metrics::ErrorKind::Overflow),
+    ] {
+        testing::assert_eq(
+            testing::expect_err(histogram.observe_many(value, weight), "atomic failure").kind,
+            kind,
+        );
+        let current = testing::expect_ok(histogram.get(), "unchanged snapshot");
+        testing::assert_eq(current.count, saved.count);
+        testing::assert_eq(current.sum, saved.sum);
+        testing::assert(current.cumulative == saved.cumulative);
+    }
+    testing::assert_ok(histogram.observe_many(1.0, 2));
+    testing::assert(saved.cumulative == Vec::from_array([7, 11, 14, 19, 22]));
+    testing::assert(
+        testing::expect_ok(histogram.get(), "later snapshot").cumulative
+            == Vec::from_array([7, 11, 14, 19, 24]),
+    );
+    let empty = testing::expect_ok(
+        registry.histogram(
+            metrics::Descriptor::histogram("no_boundaries", "", Vec::new()),
+            metrics::Labels::empty(),
+        ),
+        "empty histogram",
+    );
+    testing::assert_ok(empty.observe_many(-2.0, 3));
+    let current = testing::expect_ok(empty.get(), "empty snapshot");
+    testing::assert_eq(current.count, 3);
+    testing::assert_eq(current.sum, -6.0);
+    testing::assert_eq(current.cumulative.len(), 0);
+}

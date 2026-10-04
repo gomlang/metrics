@@ -185,10 +185,13 @@ impl Histogram {
         if !math::is_finite(sum) {
             return Result::Err(error(ErrorKind::Overflow, "histogram sum overflow"))
         }
-        for index in 0..previous.boundaries.len() {
-            if value <= previous.boundaries[index] {
-                previous.cumulative[index] = previous.cumulative[index] + count;
+        let mut index = previous.boundaries.len();
+        while index > 0 {
+            index -= 1;
+            if value > previous.boundaries[index] {
+                break;
             }
+            previous.cumulative[index] = previous.cumulative[index] + count;
         }
         self.cell.value.set(
             Value::Histogram(HistogramValue { count: previous.count + count, sum, ..previous }),
