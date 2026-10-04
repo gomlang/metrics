@@ -105,6 +105,13 @@ consistent view across the registry. Snapshots expose isolated copies through
 snapshot. Exposition orders families by name and series by label values for
 reproducible output.
 
+Registered family names use an index, so repeated registration and existing
+handle lookup avoid scanning unrelated families. Descriptor validation and
+matching series labels still apply. New family registration checks exported
+name collisions against all families; series matching searches the selected
+family. The index is updated with registration, removal and clearing under the
+same gate.
+
 `collect_gauges(context, callback)` adapts external state into existing gauges.
 The callback receives the context and returns `Vec[GaugeReading]`, each with
 name, labels and value. It runs outside the registry gate, so it may perform I/O
@@ -113,8 +120,8 @@ gate as one atomic batch. Unknown targets, duplicate readings, invalid values,
 wrong kinds or cancellation reject the entire batch. Register target series
 before collecting. Duplicate detection uses normalized, length-prefixed keys
 in a hash map. The validation loop checks cancellation before each reading;
-target lookup scans the bounded family and series lists. Large batches therefore
-cost up to readings times registered families/series while holding the gate.
+collection builds transient family and referenced-series indexes, so target
+lookup avoids rescanning every family and series for each reading.
 The callback itself is responsible for checking its context
 during long work; arbitrary user code cannot be forcibly interrupted.
 

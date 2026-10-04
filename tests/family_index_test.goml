@@ -1,0 +1,117 @@
+package tests;
+
+use ecosystem::metrics;
+use std::testing;
+
+#[test]
+fn family_lookup_stays_consistent_across_metadata_handles_and_registry_aliases() -> () {
+    let registry = testing::expect_ok(
+        metrics::Registry::new(metrics::Options { max_families: 2, ..metrics::Options::standard() }),
+        "registry",
+    );
+    let alias = registry;
+    let metadata = metrics::Descriptor::counter("metadata", "first descriptor");
+    testing::assert_ok(registry.register(metadata));
+    let series = testing::expect_ok(
+        alias.counter(metrics::Descriptor::counter("series", ""), metrics::Labels::empty()),
+        "second family",
+    );
+    testing::assert_ok(alias.register(metadata));
+    let first = testing::expect_ok(
+        registry.counter(metadata, metrics::Labels::empty()),
+        "metadata handle",
+    );
+    testing::assert_ok(first.add(7));
+    testing::assert_eq(
+        testing::expect_ok(
+            testing::expect_ok(alias.counter(metadata, metrics::Labels::empty()), "shared handle").get(),
+            "shared value",
+        ),
+        7,
+    );
+    testing::assert_eq(registry.snapshot().families().len(), 2);
+    testing::assert_eq(registry.snapshot().series_count(), 2);
+    testing::assert(alias.unregister("metadata"));
+    testing::assert(!registry.unregister("metadata"));
+    let replacement = testing::expect_ok(
+        registry.gauge(
+            metrics::Descriptor::gauge("metadata", "replacement"),
+            metrics::Labels::empty(),
+        ),
+        "new family kind",
+    );
+    testing::assert_ok(replacement.set(3.0));
+    testing::assert_eq(
+        testing::expect_err(first.get(), "detached old family").kind,
+        metrics::ErrorKind::Detached,
+    );
+    testing::assert_eq(
+        testing::expect_err(alias.register(metadata), "replacement schema").kind,
+        metrics::ErrorKind::Conflict,
+    );
+    alias.clear();
+    registry.clear();
+    testing::assert_eq(
+        testing::expect_err(series.get(), "cleared series").kind,
+        metrics::ErrorKind::Detached,
+    );
+    testing::assert_eq(
+        testing::expect_err(replacement.get(), "cleared replacement").kind,
+        metrics::ErrorKind::Detached,
+    );
+    testing::assert(registry.snapshot().families().is_empty());
+    let fresh = testing::expect_ok(
+        alias.counter(metadata, metrics::Labels::empty()),
+        "fresh schema after clear",
+    );
+    testing::assert_eq(testing::expect_ok(fresh.get(), "fresh value"), 0);
+    testing::assert_eq(registry.snapshot().families().len(), 1);
+}
+
+#[test]
+fn failed_new_families_and_removed_suffix_owners_do_not_leave_lookup_entries() -> () {
+    let registry = testing::expect_ok(
+        metrics::Registry::new(metrics::Options { max_series: 1, ..metrics::Options::standard() }),
+        "registry",
+    );
+    let existing = testing::expect_ok(
+        registry.counter(metrics::Descriptor::counter("existing", ""), metrics::Labels::empty()),
+        "existing",
+    );
+    let blocked = metrics::Descriptor::counter("blocked", "old schema");
+    testing::assert_eq(
+        testing::expect_err(registry.counter(blocked, metrics::Labels::empty()), "series limit").kind,
+        metrics::ErrorKind::Limit,
+    );
+    testing::assert(!registry.unregister("blocked"));
+    testing::assert(registry.unregister("existing"));
+    testing::assert_eq(
+        testing::expect_err(existing.get(), "detached").kind,
+        metrics::ErrorKind::Detached,
+    );
+    let fresh = testing::expect_ok(
+        registry.gauge(
+            metrics::Descriptor::gauge("blocked", "new schema"),
+            metrics::Labels::empty(),
+        ),
+        "no rejected schema retained",
+    );
+    testing::assert_ok(fresh.set(9.0));
+    registry.clear();
+    let histogram = metrics::Descriptor::histogram("latency", "", Vec::from_array([1.0]));
+    testing::assert_ok(registry.register(histogram));
+    let suffix = metrics::Descriptor::counter("latency_sum", "");
+    testing::assert_eq(
+        testing::expect_err(registry.register(suffix), "live histogram suffix").kind,
+        metrics::ErrorKind::Conflict,
+    );
+    testing::assert(registry.unregister("latency"));
+    testing::assert_ok(registry.register(suffix));
+    testing::assert_eq(
+        testing::expect_err(registry.register(histogram), "reverse collision").kind,
+        metrics::ErrorKind::Conflict,
+    );
+    registry.clear();
+    testing::assert_ok(registry.register(histogram));
+    testing::assert_eq(registry.snapshot().families().len(), 1);
+}

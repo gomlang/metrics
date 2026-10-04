@@ -17,6 +17,7 @@ pub struct Registry {
     options: Options,
     gate: Channel[()],
     families: Ref[Vec[Family]],
+    named: HashMap[string, Family],
 }
 
 fn context_error(problem: context::Error) -> Error {
@@ -34,7 +35,9 @@ impl Registry {
         options.validate()?;
         let gate = Channel::new(1);
         gate.send(());
-        Result::Ok(Registry { options, gate, families: Ref::new(Vec::new()) })
+        Result::Ok(
+            Registry { options, gate, families: Ref::new(Vec::new()), named: HashMap::new() },
+        )
     }
 
     fn acquire(self: Registry, ctx: context::Context) -> Result[(), Error] {
@@ -62,18 +65,15 @@ impl Registry {
     }
 
     fn family(self: Registry, descriptor: Descriptor) -> Result[Option[Family], Error] {
-        for family in self.families.get() {
-            if family.descriptor.name == descriptor.name {
-                if compatible(family.descriptor, descriptor) {
-                    return Result::Ok(Option::Some(family))
-                }
-                return Result::Err(
-                    error(
-                        ErrorKind::Conflict,
-                        "metric descriptor differs from previous registration",
-                    ),
-                )
+        if let Some(family) = self.named.get(descriptor.name) {
+            if compatible(family.descriptor, descriptor) {
+                return Result::Ok(Option::Some(family))
             }
+            return Result::Err(
+                error(ErrorKind::Conflict, "metric descriptor differs from previous registration"),
+            )
+        }
+        for family in self.families.get() {
             for incoming in sample_names(descriptor) {
                 for existing in sample_names(family.descriptor) {
                     if incoming == existing {
@@ -93,12 +93,19 @@ impl Registry {
         Result::Ok(Option::None)
     }
 
+    fn add_family_locked(self: Registry, descriptor: Descriptor) -> Family {
+        let family = Family { descriptor, series: Ref::new(Vec::new()) };
+        self.families.get().push(family);
+        self.named.set(descriptor.name, family);
+        family
+    }
+
     pub fn register(self: Registry, descriptor: Descriptor) -> Result[(), Error] {
         let descriptor = descriptor.validate(self.options)?;
         self.lock();
         defer self.unlock();
         if self.family(descriptor)?.is_none() {
-            self.families.get().push(Family { descriptor, series: Ref::new(Vec::new()) });
+            let _ = self.add_family_locked(descriptor);
         }
         Result::Ok(())
     }
@@ -156,11 +163,7 @@ impl Registry {
         }
         let family = match existing {
             Some(family) => family,
-            None => {
-                let family = Family { descriptor, series: Ref::new(Vec::new()) };
-                self.families.get().push(family);
-                family
-            },
+            None => self.add_family_locked(descriptor),
         };
         let cell = Cell {
             labels,
@@ -221,6 +224,7 @@ impl Registry {
                 for cell in family.series.get() {
                     cell.active.set(false);
                 }
+                self.named.remove(name);
                 found = true;
             } else {
                 retained.push(family);
@@ -237,6 +241,7 @@ impl Registry {
             for cell in family.series.get() {
                 cell.active.set(false);
             }
+            self.named.remove(family.descriptor.name);
         }
         self.families.set(Vec::new());
     }
