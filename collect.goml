@@ -33,11 +33,6 @@ impl Registry {
         if readings.len() > self.options.max_series {
             return Result::Err(error(ErrorKind::Limit, "collector batch exceeds series limit"))
         }
-        let families: HashMap[string, Family] = HashMap::new();
-        for family in self.families.get() {
-            ctx.check().map_err(context_error)?;
-            families.insert(family.descriptor.name, family);
-        }
         let indexed: HashMap[string, HashMap[string, Cell]] = HashMap::new();
         let updates = Vec::new();
         let seen: HashMap[string, bool] = HashMap::new();
@@ -48,7 +43,7 @@ impl Registry {
                     error(ErrorKind::InvalidValue, "collector returned a nonfinite gauge"),
                 )
             }
-            let family = families.get(reading.name).ok_or(
+            let family = self.named.get(reading.name).ok_or(
                 error(ErrorKind::Detached, "collector target series is not registered"),
             )?;
             if family.descriptor.kind != Kind::Gauge {

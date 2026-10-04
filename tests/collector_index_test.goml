@@ -98,3 +98,59 @@ fn collector_keys_distinguish_delimiters_and_validate_before_atomic_commit() -> 
     );
     testing::assert_eq(testing::expect_ok(a.get(), "unchanged duplicate"), 3.0);
 }
+
+#[test]
+fn collector_resolves_families_after_reentrant_clear_and_kind_replacement() -> () {
+    let registry = registry();
+    let old = gauge(registry, "target");
+    testing::assert_ok(
+        registry.collect_gauges(
+            context::Context::background(),
+            |_| {
+                registry.clear();
+                let _ = gauge(registry, "target");
+                Result::Ok(
+                    Vec::from_array(
+                        [metrics::GaugeReading { name: "target", labels: empty(), value: 7.0 }],
+                    ),
+                )
+            },
+        ),
+    );
+    testing::assert_eq(
+        testing::expect_err(old.get(), "cleared handle").kind,
+        metrics::ErrorKind::Detached,
+    );
+    let replacement = gauge(registry, "target");
+    testing::assert_eq(testing::expect_ok(replacement.get(), "replacement updated"), 7.0);
+    let stable = gauge(registry, "stable");
+    testing::assert_ok(stable.set(1.0));
+    let problem = testing::expect_err(
+        registry.collect_gauges(
+            context::Context::background(),
+            |_| {
+                testing::assert(registry.unregister("target"));
+                let _ = counter(registry, "target");
+                Result::Ok(
+                    Vec::from_array(
+                        [
+                            metrics::GaugeReading { name: "stable", labels: empty(), value: 9.0 },
+                            metrics::GaugeReading { name: "target", labels: empty(), value: 9.0 },
+                        ],
+                    ),
+                )
+            },
+        ),
+        "replacement is a counter",
+    );
+    testing::assert_eq(problem.kind, metrics::ErrorKind::Conflict);
+    testing::assert_eq(testing::expect_ok(stable.get(), "atomic rejected batch"), 1.0);
+    testing::assert_eq(
+        testing::expect_err(replacement.get(), "replaced handle").kind,
+        metrics::ErrorKind::Detached,
+    );
+    testing::assert_eq(
+        testing::expect_ok(counter(registry, "target").get(), "counter untouched"),
+        0,
+    );
+}

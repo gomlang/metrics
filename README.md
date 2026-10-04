@@ -120,8 +120,11 @@ gate as one atomic batch. Unknown targets, duplicate readings, invalid values,
 wrong kinds or cancellation reject the entire batch. Register target series
 before collecting. Duplicate detection uses normalized, length-prefixed keys
 in a hash map. The validation loop checks cancellation before each reading;
-collection builds transient family and referenced-series indexes, so target
-lookup avoids rescanning every family and series for each reading.
+collection reuses the family-name index and builds transient indexes for
+referenced series, so target lookup avoids rescanning every family and series
+for each reading. The family-name index is read only after the callback returns
+and the registry gate is acquired, so callback changes to registrations are
+observed by the batch.
 The callback itself is responsible for checking its context
 during long work; arbitrary user code cannot be forcibly interrupted.
 
