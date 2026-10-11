@@ -6,8 +6,10 @@ Python helpers, global singleton registries or background workers.
 
 ```toml
 [dependencies]
-"ecosystem::metrics" = "0.1.0"
+"ecosystem::metrics" = true
 ```
+
+GoML dependencies are unversioned: `true` tracks each package repository’s default branch.
 
 The handle design is inspired by [Rust metrics](https://docs.rs/metrics/latest/metrics/).
 The exporter implements the classic
@@ -154,9 +156,9 @@ returned content type; the metrics library itself has no HTTP dependency.
 
 ```sh
 cd ~/git/gomlang/metrics
-../../goml-dev/stage2/bin/goml fmt --check
-../../goml-dev/stage2/bin/goml test
-GOFLAGS=-race ../../goml-dev/stage2/bin/goml test --target-dir _artifact/race --timeout 300s
+goml fmt --check
+goml test
+GOFLAGS=-race goml test --target-dir _artifact/race --timeout 300s
 ```
 
 Native tests cover exact exposition vectors, Unicode and escaping, normalized
@@ -175,15 +177,14 @@ as floating point, so very large counts may lose precision downstream.
 
 ## Development and examples
 
-Requires GoML 0.1.56 or newer. The `examples/basic/` example shares the root manifest and its dependencies. From the library root, run:
+Requires the source-built GoML toolchain with unversioned registry support pinned in [verification/ci/toolchain.json](https://github.com/gomlang/verification/blob/main/ci/toolchain.json). The `examples/basic/` example shares the root manifest and its dependencies. From the library root, run:
 
 ```sh
 goml run --example basic
 goml test
-goml verify --timeout 300s
 ```
 
-`goml test` builds the example and runs its tests. `goml verify` repeats the example checks as an independent module against an isolated registry snapshot. `(cd ../verification && just ecosystem-test metrics)` also retains the library-specific smoke and compatibility checks.
+`goml test` builds the example and runs its tests. `(cd ../verification && just ecosystem-test metrics)` also retains the library-specific smoke and compatibility checks.
 
 Snapshot ordering uses O(n log n) comparisons for families and each family’s
 series, including reverse registration order, with O(n) temporary sort storage. Label values are compared
